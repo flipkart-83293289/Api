@@ -1,150 +1,89 @@
-import time
-import logging
 from flask import Flask, request, jsonify
-from flask_cors import CORS
+import time, logging
 
-# Logging for Render Console
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s'
-)
-
-# FIXED: Standard Flask instantiation with double underscores
 app = Flask(__name__)
-CORS(app)
 
-# RAM-only volatile storage
-pending_commands = {}
+device_commands = {}
 device_results = {}
 active_devices = {}
 
-DATA_TTL_SECONDS = 600  # Auto-purge RAM data older than 10 minutes
-
-
-def cleanup_stale_data():
-    current_time = time.time()
-    
-    expired_results = [
-        dev_id for dev_id, data in device_results.items()
-        if current_time - data.get("timestamp", 0) > DATA_TTL_SECONDS
-    ]
-    for dev_id in expired_results:
-        device_results.pop(dev_id, None)
-
-    expired_cmds = [
-        dev_id for dev_id, data in pending_commands.items()
-        if current_time - data.get("timestamp", 0) > DATA_TTL_SECONDS
-    ]
-    for dev_id in expired_cmds:
-        pending_commands.pop(dev_id, None)
-
-
-@app.route("/", methods=["GET"])
+@app.route('/')
 def home():
-    cleanup_stale_data()
-    return jsonify({
-        "status": "online",
-        "system": "Device X Automation Relay Server",
-        "active_devices_count": len(active_devices),
-        "server_time": time.strftime("%Y-%m-%d %H:%M:%S")
-    }), 200
+    return "Server is Running Alive!", 200
 
-
-@app.route("/get-command", methods=["GET"])
+# 1. ऐप जब कमांड मांगने आता है (पुराना + नया रास्ता दोनों हैंडल करेगा)
+@app.route('/get-command', methods=['GET'])
+@app.route('/api/v1/command/fetch', methods=['GET', 'POST'])  # <--- यह 404 फिक्स करेगा!
 def get_command():
-    cleanup_stale_data()
-    device_id = request.args.get("device_id")
-    
+    device_id = request.args.get('device_id') or (request.get_json(silent=True) or {}).get('device_id')
     if not device_id:
-        return jsonify({"error": "device_id parameter required"}), 400
+        # अगर JSON में आया है
+        device_id = request.args.get('deviceId')
+        
+    if device_id:
+        active_devices[device_id] = time.strftime("%Y-%m-%d %H:%M:%S")
+        if device_id in device_commands and device_commands[device_id]:
+            cmd = device_commands[device_id].pop(0)
+            logging.info(f"Delivered command '{cmd}' to device: {device_id}")
+            return jsonify({"command": cmd, "cmd": cmd}), 200
+            
+    return jsonify({"command": "none", "cmd": "none"}), 200
 
-    active_devices[device_id] = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    if device_id in pending_commands and pending_commands[device_id]:
-        command_data = pending_commands.pop(device_id)
-        logging.info(f"Delivered command '{command_data['cmd']}' to device: {device_id}")
-        return jsonify(command_data), 200
-
-    return jsonify({"cmd": None}), 200
-
-
-@app.route("/post-result", methods=["POST"])
+# 2. ऐप जब डेटा/रिस्पॉन्स वापस सर्वर पर भेजता है (404 फिक्स)
+@app.route('/post-result', methods=['POST'])
+@app.route('/api/v1/telemetry', methods=['POST'])  # <--- यह 404 फिक्स करेगा!
 def post_result():
-    cleanup_stale_data()
-    data = request.get_json(silent=True)
+    data = request.get_json(force=True, silent=True) or {}
     
-    if not data:
-        return jsonify({"error": "Invalid JSON payload"}), 400
+    device_id = data.get("device_id") or data.get("deviceId")
+    cmd = data.get("cmd") or data.get("command") or "telemetry"
+    result = data.get("result") or data.get("data") or data.get("telemetry")
 
-    device_id = data.get("device_id")
-    cmd = data.get("cmd")
-    result = data.get("result")
-
-    if not device_id or not cmd:
-        return jsonify({"error": "Missing device_id or cmd parameters"}), 400
-
-    device_results[device_id] = {
-        "cmd": cmd,
-        "result": result,
-        "timestamp": time.time()
-    }
-
-    active_devices[device_id] = time.strftime("%Y-%m-%d %H:%M:%S")
-    logging.info(f"Received result for '{cmd}' from device: {device_id}")
-
-    return jsonify({"status": "success"}), 200
+    if device_id:
+        device_results[device_id] = {
+            "cmd": cmd,
+            "result": result,
+            "timestamp": time.time()
+        }
+        active_devices[device_id] = time.strftime("%Y-%m-%d %H:%M:%S")
+        logging.info(f"Received telemetry/result from {device_id}")
+        return jsonify({"status": "success"}), 200
+        
+    return jsonify({"error": "No device_id provided"}), 400
 
 
-@app.route("/send-command", methods=["POST"])
+# 3. डैशबोर्ड के लिए कमांड भेजने का रास्ता
+@app.route('/send-command', methods=['POST'])
 def send_command():
-    cleanup_stale_data()
-    data = request.get_json(silent=True)
-    
-    if not data:
-        return jsonify({"error": "Invalid JSON payload"}), 400
-
+    data = request.get_json(force=True, silent=True) or {}
     device_id = data.get("device_id")
     cmd = data.get("cmd")
-
-    if not device_id or not cmd:
-        return jsonify({"error": "Missing target device_id or cmd parameters"}), 400
-
-    pending_commands[device_id] = {
-        "cmd": cmd,
-        "timestamp": time.time()
-    }
-
-    logging.info(f"Queued command '{cmd}' for target device: {device_id}")
-
-    return jsonify({
-        "status": "queued",
-        "target_device": device_id,
-        "command": cmd
-    }), 200
-
-
-@app.route("/get-result", methods=["GET"])
-def get_result():
-    cleanup_stale_data()
-    device_id = request.args.get("device_id")
     
-    if not device_id:
-        return jsonify({"error": "device_id parameter required"}), 400
+    if not device_id or not cmd:
+        return jsonify({"error": "Missing device_id or cmd"}), 400
+        
+    if device_id not in device_commands:
+        device_commands[device_id] = []
+        
+    device_commands[device_id].append(cmd)
+    return jsonify({"status": "Command queued", "cmd": cmd}), 200
 
+
+# 4. डैशबोर्ड के लिए रिजल्ट चेक करने का रास्ता
+@app.route('/get-result', methods=['GET'])
+def get_result():
+    device_id = request.args.get("device_id")
     if device_id in device_results:
-        result_data = device_results.pop(device_id)
-        return jsonify(result_data), 200
+        res = device_results.pop(device_id) # एक बार पढ़ने के बाद क्लियर
+        return jsonify(res), 200
+    return jsonify({"result": None}), 200
 
-    return jsonify({"status": "no_data_yet"}), 200
 
-
-@app.route("/list-devices", methods=["GET"])
+# 5. एक्टिव डिवाइसेस की लिस्ट
+@app.route('/list-devices', methods=['GET'])
 def list_devices():
-    cleanup_stale_data()
-    return jsonify({
-        "active_devices": active_devices
-    }), 200
-
+    return jsonify({"active_devices": active_devices}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
