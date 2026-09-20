@@ -55,5 +55,5 @@ async def issue_command(cmd: CommandIssue, api_key: str = Depends(verify_api_key
     pending_commands.append({"command": cmd.command, "payload": cmd.payload})
     return {"status": "queued", "command": cmd.command}
 
-if name == "main":
+if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000)
