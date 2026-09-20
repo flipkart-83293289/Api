@@ -10,7 +10,7 @@ logging.basicConfig(
 )
 
 # FIXED: Standard Flask instantiation with double underscores
-app = Flask(name)
+app = Flask(__name__)
 CORS(app)
 
 # RAM-only volatile storage
