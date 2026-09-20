@@ -136,5 +136,5 @@ def list_devices():
     return jsonify({
         "active_devices": active_devices
     }), 200
-    if name == "main":
+    __if name == "main":
     app.run(host="0.0.0.0", port=5000)
