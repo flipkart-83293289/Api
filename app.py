@@ -121,27 +121,12 @@ def post_telemetry():
         "message": "Telemetry received successfully"
     }), 200
 
-# --- 6. Fetch Latest Result Endpoint (डैशबोर्ड पर आउटपुट दिखाने के लिए) ---
-@app.route('/api/get-latest-result', methods=['GET'])
-@token_required
-def get_latest_result():
-    device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
-    result = device_telemetry_results.get(device_id, {"info": "Awaiting device telemetry data..."})
-    return jsonify({
-        "status": "success",
-        "data": result
-    }), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-0
-
 # --- 6. Fetch Latest Result Endpoint (डैशबोर्ड पर रिजल्ट दिखाने के लिए) ---
 @app.route('/api/get-latest-result', methods=['GET'])
 @token_required
 def get_latest_result():
     device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
-    result = device_telemetry_results.get(device_id, {"info": "No recent telemetry data found."})
+    result = device_telemetry_results.get(device_id, {"info": "Awaiting device telemetry data..."})
     return jsonify({
         "status": "success",
         "data": result
