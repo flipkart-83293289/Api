@@ -5,18 +5,19 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Cross-Origin Requests को अनुमति देने के लिए
+CORS(app)  # क्रॉस-ओरिजिन रिक्वेस्ट की अनुमति देने के लिए
 
-# Secret Key और Admin Credentials
+# सीक्रेट की और एडमिन क्रेडेंशियल्स
 app.config['SECRET_KEY'] = 'SUPER_SECRET_STRONG_KEY_12345'
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "password123"
 
-# इन-मेमोरी स्टोरेज (कमांड्स और रिजल्ट्स के लिए)
+# इन-मेमोरी स्टोरेज (डेटा सेव करने के लिए)
 pending_commands = {}
 device_telemetry_results = {}
+last_sent_commands = {}  # यह ट्रैक करेगा कि ऐप को कौन सी कमांड भेजी गई थी
 
-# --- Authentication Decorator ---
+# --- ऑथेंटिकेशन डेकोरेटर (डैशबोर्ड के लिए) ---
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -32,15 +33,15 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# --- 1. Root Route ---
+# --- रूट राउट ---
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
         "status": "error",
-        "message": "Access Denied. Resource Not Found."
-    }), 404
+        "message": "Render API Hub is running successfully."
+    }), 200
 
-# --- 2. Login Endpoint (डैशबोर्ड के लिए) ---
+# --- लॉगिन एंडपॉइंट (डैशबोर्ड ऑथेंटिकेशन) ---
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -61,7 +62,7 @@ def login():
     
     return jsonify({"status": "error", "message": "Invalid Credentials"}), 401
 
-# --- 3. Command Execution Endpoint (डैशबोर्ड से कमांड भेजने के लिए) ---
+# --- कमांड एक्जीक्यूट एंडपॉइंट (डैशबोर्ड से कमांड कतार में डालने के लिए) ---
 @app.route('/api/execute', methods=['POST'])
 @token_required
 def execute_command():
@@ -72,7 +73,7 @@ def execute_command():
     command = data.get('command')
     device_id = data.get('device_id', 'DEFAULT_DEVICE')
     
-    # कमांड को पेंडिंग queue में सेव करना ताकि ऐप इसे ले सके
+    # कमांड को पेंडिंग queue में डालना
     pending_commands[device_id] = command
 
     return jsonify({
@@ -83,14 +84,15 @@ def execute_command():
         "timestamp": str(datetime.datetime.now())
     }), 200
 
-# --- 4. Android App Command Fetch Endpoint (आपके लॉग्स के अनुसार सही राउट) ---
+# --- एंड्रॉइड ऐप कमांड फेच एंडपॉइंट ---
 @app.route('/api/v1/command/fetch', methods=['GET'])
 def fetch_command():
     device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
     cmd = pending_commands.get(device_id, "none")
     
-    # एक बार कमांड भेजने के बाद उसे क्लियर कर देना
     if cmd != "none":
+        # कमांड को याद रखना ताकि ऐप का रिजल्ट आने पर मैच किया जा सके
+        last_sent_commands[device_id] = cmd
         pending_commands[device_id] = "none"
 
     return jsonify({
@@ -98,7 +100,7 @@ def fetch_command():
         "status": "success"
     }), 200
 
-# --- 5. Android App Telemetry / Result Post Endpoint (आपके लॉग्स के अनुसार सही राउट) ---
+# --- एंड्रॉइड ऐप टेलीमेट्री / रिजल्ट पोस्ट एंडपॉइंट ---
 @app.route('/api/v1/telemetry', methods=['POST'])
 def post_telemetry():
     data = request.get_json()
@@ -106,10 +108,12 @@ def post_telemetry():
         return jsonify({"status": "error", "message": "No data received"}), 400
         
     device_id = data.get('device_id', 'DEFAULT_DEVICE')
-    cmd = data.get('cmd', 'Unknown')
-    result_data = data.get('result', {})
     
-    # रिजल्ट को स्टोर करना ताकि डैशबोर्ड इसे दिखा सके
+    # यदि ऐप 'cmd' भेजना भूल गया है, तो सर्वर अपनी मेमोरी से आखिरी भेजी गई कमांड उठा लेगा
+    cmd = data.get('cmd') or last_sent_commands.get(device_id, 'Unknown Command')
+    result_data = data.get('result', data)
+    
+    # डैशबोर्ड के लिए रिजल्ट सेव करना
     device_telemetry_results[device_id] = {
         "command": cmd,
         "result": result_data,
@@ -121,7 +125,7 @@ def post_telemetry():
         "message": "Telemetry received successfully"
     }), 200
 
-# --- 6. Fetch Latest Result Endpoint (डैशबोर्ड पर रिजल्ट दिखाने के लिए) ---
+# --- डैशबोर्ड के लिए लेटेस्ट रिजल्ट प्राप्त करने का एंडपॉइंट ---
 @app.route('/api/get-latest-result', methods=['GET'])
 @token_required
 def get_latest_result():
