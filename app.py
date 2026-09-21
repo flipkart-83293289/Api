@@ -115,7 +115,7 @@ def get_latest_result():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-� ऐप 'cmd' भेजना भूल गया है, तो सर्वर अपनी मेमोरी से आखिरी भेजी गई कमांड उठा लेगा
+ ऐप 'cmd' भेजना भूल गया है, तो सर्वर अपनी मेमोरी से आखिरी भेजी गई कमांड उठा लेगा
     cmd = data.get('cmd') or last_sent_commands.get(device_id, 'Unknown Command')
     result_data = data.get('result', data)
     
