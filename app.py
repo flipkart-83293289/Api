@@ -84,6 +84,8 @@ def post_telemetry():
         return jsonify({"status": "error", "message": "No data"}), 400
         
     device_id = data.get('device_id', 'DEFAULT_DEVICE')
+    
+    # ऐप 'cmd' भेजना भूल गया है, तो सर्वर अपनी मेमोरी से आखिरी भेजी गई कमांड उठा लेगा
     cmd = data.get('cmd') or last_sent_commands.get(device_id, 'Unknown')
     result_data = data.get('result', data)
     
@@ -111,35 +113,6 @@ def get_latest_result():
     return jsonify({
         "status": "success",
         "data": device_telemetry_results[device_id]
-    }), 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
- #ऐप 'cmd' भेजना भूल गया है, तो सर्वर अपनी मेमोरी से आखिरी भेजी गई कमांड उठा लेगा
-    cmd = data.get('cmd') or last_sent_commands.get(device_id, 'Unknown Command')
-    result_data = data.get('result', data)
-    
-    # डैशबोर्ड के लिए रिजल्ट सेव करना
-    device_telemetry_results[device_id] = {
-        "command": cmd,
-        "result": result_data,
-        "timestamp": str(datetime.datetime.now())
-    }
-
-    return jsonify({
-        "status": "success",
-        "message": "Telemetry received successfully"
-    }), 200
-
-# --- डैशबोर्ड के लिए लेटेस्ट रिजल्ट प्राप्त करने का एंडपॉइंट ---
-@app.route('/api/get-latest-result', methods=['GET'])
-@token_required
-def get_latest_result():
-    device_id = request.args.get('device_id', 'DEFAULT_DEVICE')
-    result = device_telemetry_results.get(device_id, {"info": "Awaiting device telemetry data..."})
-    return jsonify({
-        "status": "success",
-        "data": result
     }), 200
 
 if __name__ == '__main__':
